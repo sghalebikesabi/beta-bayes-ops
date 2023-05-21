@@ -1,0 +1,57 @@
+run_name:
+  prefix: ""
+  model_keys_name:
+    [
+      "methods_args.task_name",
+      "methods_args.method_names",
+      "sweeps.epsilon",
+      "sweeps.n_obs",
+      "sweeps.n_feats",
+      "sweeps.n_rep",
+    ]
+
+chaudhuri_correct: True
+
+chaudhuri_sqrt: True
+
+rmse_correct: True
+
+logging:
+  final_params_plot: False
+  final_predictions_save: False
+  plot_args:
+    format: jpg
+
+methods_args:
+  task_name: logReg
+  method_names: ["Chaudhuri", "BetaBayes", "Minami"]
+  stan_dir: "stan_files"
+  delta: 1e-5
+  n_warmup: 1_000
+  n_mcmc: 100 # one sample is enough for DP, choose more to show how multiple samples perform
+  prior_var: 9
+  reg: 0.1111111111111111
+  # NN
+  hidden_size: 10
+  lr: 1e-2
+  clip_norm: 1
+  epochs: 10
+  batch_size: 100
+  run_bnn: False
+
+data:
+  group: simulated
+  name: None
+  eval_split: test
+
+seed: 42
+
+wandb_args:
+  mode: online
+  project: dp-beta
+  entity: XXXX
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

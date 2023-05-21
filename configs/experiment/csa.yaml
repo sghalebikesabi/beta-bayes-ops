@@ -1,0 +1,13 @@
+# @package _global_
+
+sweeps:
+  n_obs: [20, 50, 100, 200, 500, 1000]
+  n_feats: [1]
+  epsilon: [0.1, 0.2, 0.3, 0.5, 1, 2, 5]
+
+methods_args:
+  task_name: logReg
+  method_names: ["Chaudhuri", "Chaudhuri_sklearn", "BetaBayes", "Minami"]
+
+wandb_args:
+  project: beta-csa-18

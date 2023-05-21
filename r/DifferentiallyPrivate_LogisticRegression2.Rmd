@@ -1,0 +1,448 @@
+---
+title: "DifferentiallyPrivate_LogisticRegression"
+author: "XXXX"
+date: "30 Jan 2023"
+output: html_document
+---
+
+-   Compare noised MLE' with betaD-Bayes estimates
+-   Increasing $n$ and increasing $p$
+
+## Preamble {.tabset}
+
+### Working directory
+
+-   Change this to be the directory that the stan files are saved in
+
+```{r setwd, include=TRUE,echo=TRUE, eval = TRUE,cache=FALSE}
+my_dir <- "/Users/XXX/Projects/dp-beta/.old"
+
+setwd(my_dir)
+```
+
+### Packages
+
+Loading the required packages.
+
+```{r packages, include=TRUE, echo=TRUE, eval = TRUE, cache=FALSE}
+library("rstan")
+library("matrixStats")
+library("LaplacesDemon")
+library(mvtnorm)
+library(rmutil)
+
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+```
+
+### stan file compilations
+
+Loading and compiling .stan programs
+
+-   Need a Gaussian priro logistic regressio (to get the MAPs) and a beta-Bayes
+
+```{r stan_files, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+setwd(my_dir)
+
+KLBayes_logisticRegression_stan <- stan_model(file = "KLBayes_logisticRegression_ML.stan")
+
+betaBayes_logisticRegression_stan <- stan_model(file = "betaBayes_logisticRegression_ML.stan")
+
+KLBayes_power_logisticRegression_stan <- stan_model(file = "KLBayes_power_logisticRegression_ML.stan") # ? this is the same as KLBayes if w=1?
+```
+
+### Logistic regression functions
+
+```{r logisticRegression_fns, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+p_logistic <- function(Xbeta) {
+  return((exp(1 / 2 * Xbeta)) / (exp(1 / 2 * Xbeta) + exp(-1 / 2 * Xbeta)))
+}
+
+logistic_predictive <- function(beta_samp, X) {
+  ## The P(Y = 1|X) averaged over beta_samp
+  n_obs <- nrow(X)
+  n_samp <- nrow(beta_samp)
+
+  predictive_p <- matrix(NA, nrow = n_samp, ncol = n_obs)
+  for (i in 1:n_samp) {
+    predictive_p[i, ] <- p_logistic(X %*% beta_samp[i, ])
+  }
+  return(colMeans(predictive_p))
+}
+
+min_max_std_data <- function(X, min, max) {
+  X <- pmin(X, max)
+  X <- pmax(X, min)
+  X <- (X - min) / (max - min)
+  return(X)
+}
+
+min_max_std_params <- function(beta, min, max) {
+  beta_0 <- beta[1]
+  beta_rest <- beta[-1]
+  beta_rest <- bets_rest / (max - min)
+  beta_0
+  return(beta)
+}
+
+## this is for the parameters
+min_max_unstd <- function(X, min, max) {
+  X <- X * (max - min) + min
+  return(X)
+}
+```
+
+# Beating Logistic Regression
+
+Lets now focus on just producing one sample form the betaD-Posterior. Can we show we beat ObjectivePertubation (Chaudhuri et al (2011) i.e. Ji & Elkan) and also the power/Gibbs posterior methods (Wang et al (2016) and Minami et al (2016))
+
+-   Chaudhuri et al (2011) (Algorithm 1) adds laplace noise $2/\epsilon\lambda$ for $(\epsilon, 0)$-DP (requires $x_{ij} \in (0, 1)$) (I have made the regulariser ot increase with $n$)
+-   betaD-Bayes can draw one sample from $\beta = \frac{2w}{\epsilon} + 1 (\beta > 1)$ (we will take w = 1 for simplicity) $(\epsilon, 0)$-DP
+-   Minami et al (2016) can draw one sample from the power/Gibbs posterior with $w = \frac{\epsilon}{2r}\sqrt{\frac{\lambda}{1 + 2\log(1/\delta)}}$ for $(\epsilon, \delta)$-DP (requires $||x_i||_2 = \sqrt{\sum_{j=1}^p x_{ij}^2} \leq r$ so if $x_{ij} \in (0, 1)$ then \$r = \sqrt{p}\$)(I have made the regulariser/prior precision not increase with $n$)
+-   Chaudhuri et al (2011) (Algorithm 2) ??
+-   Wang et al (2015) ??
+-   Avella-Medina (2021) - Logistic Regression with the quasi-likelihood
+-   Avella-Medina (2021) - with the betaD is this more or less efficient than the my proof with the posterior sampling (can we their techniques for our posterior)
+
+Want for loops over different values + $n$, + $\epsilon$ + and for each we need to repeat experiemnts
+
+I would love a plot for each $\epsilon$, showing the behaviour as $n$ increases
+
+## Differential Privacy
+
+Remember Dwork et al. (2006) says you must add Laplace noise of Lap(Sensitivity/epsilon)
+
+```{r epsilon_DP2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+epsilon_vec <- c(0.5, 1, 3, 6)
+# epsilon_vec <- 6
+```
+
+## Data p = 6
+
+```{r true_experiments_data_sim_n1002, include=TRUE,echo=TRUE, eval=TRUE,cache=TRUE}
+set.seed(25) # ? why is this set to this different values everywhere?
+
+N_rep <- 50 # 100 #100
+n_obs <- c(100, 200)
+# n_obs <- c(100)
+p_dim <- 6 ## could even thing about changing this
+
+theta_gen <- 8 * c(0, 0.5, 1, -1.5, 0, 0)
+epsilon_vec <- c(0.5, 1) # ? can we choose this arbitrarily small?
+
+# N_rep <- 10 # 100 #100
+# n_obs <- c(100)
+# # n_obs <- c(100)
+# p_dim <- 6 ## could even thing about changing this
+#
+# theta_gen <- 8 * c(0, 0.5, 1, -1.5, 0, 0)
+# epsilon_vec <- c(0.5)
+
+
+true_data <- list()
+
+# predictor_covariance <- matrix(0.5,nrow=p_dim-1,ncol=p_dim-1) + diag(0.5,p_dim-1)
+predictor_covariance <- diag(1, p_dim - 1)
+
+for (n in 1:length(n_obs)) {
+  true_n_data <- list()
+  for (j in 1:N_rep) {
+    # data_X <- cbind(1,rmvnorm(n_obs, mean = rep(0,p_dim-1), sigma = predictor_covariance))
+    data_X <- cbind(1, min_max_std_data(rmvnorm(n_obs[n], mean = rep(0, p_dim - 1), sigma = predictor_covariance), min = -4, max = 4))
+    data_y <- rep(NA, n_obs[n])
+    p_i <- p_logistic(drop(theta_gen %*% t(data_X)))
+    for (i in 1:n_obs[n]) {
+      data_y[i] <- sample(c(0, 1), 1, replace = TRUE, prob = c(1 - p_i[i], p_i[i]))
+    }
+    true_n_data[[j]] <- list("data_X" = data_X, "data_y" = data_y)
+  }
+  true_data[[n]] <- true_n_data
+}
+## HAVE TO THRESHOLD THE DATA FOR KLD!
+## DON'T HAVE TO FOR BETAD BUT MIGHT BE A GOOD IDEA - yes it makes the betas on the same scalke as they would be
+```
+
+## Prior Specification
+
+A Gaussian priro for all - we will say this is fxed by the problem somehow not tuned
+
+```{r L2_regulariser2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+v_0 <- 3^2 # ? what is that
+lambda <- 1 / v_0
+```
+
+## Object Pertubation - Chaudhuri et al (2011) (Algorithm 1) {.tabset}
+
+### Optimisation
+
+```{r KLBayes_logisticRegression_fit2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+set.seed(51)
+
+theta_hat_KLBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, p_dim))
+theta_hat_private_KLBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec), p_dim))
+
+for (n in 1:length(n_obs)) {
+  true_n_data <- true_data[[n]]
+
+  for (j in 1:N_rep) {
+    data_X <- true_n_data[[j]]$data_X
+    data_y <- true_n_data[[j]]$data_y
+
+    # data
+    KLBayes_logisticRegression_data <- list(
+      n = n_obs[n], p = p_dim, y = matrix(2 * data_y - 1, nrow = n_obs[n], ncol = 1), # ? why y in -1/1
+      X = data_X,
+      mu_beta = 0,
+      beta_s = v_0
+    )
+
+    # fit
+    KLBayes_logisticRegression_fit <- optimizing(
+      object = KLBayes_logisticRegression_stan,
+      data = KLBayes_logisticRegression_data
+    )
+
+    theta_hat_KLBayes_logisticRegression[n, j, ] <- KLBayes_logisticRegression_fit$par[1:p_dim]
+
+    for (e in 1:length(epsilon_vec)) {
+      epsilon <- epsilon_vec[e]
+
+      theta_hat_private_KLBayes_logisticRegression[n, j, e, ] <- theta_hat_KLBayes_logisticRegression[n, j, ] + rlaplace(p_dim, 0, 2 / (lambda * epsilon))
+    }
+  }
+}
+```
+
+### Diag
+
+```{r KLBayes_logisticRegression_diag2, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+## unprivate error
+unprivate_MAE_KLBayes_logisticRegression <- matrix(NA, nrow = length(n_obs), ncol = N_rep)
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    unprivate_MAE_KLBayes_logisticRegression[n, j] <- sum(abs(theta_hat_KLBayes_logisticRegression[n, j, ] - theta_gen))
+  }
+}
+
+unprivate_MAE_KLBayes_logisticRegression
+rowMeans(unprivate_MAE_KLBayes_logisticRegression / p_dim)
+
+private_MAE_KLBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+private_MSE_KLBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    for (e in 1:length(epsilon_vec)) {
+      private_MAE_KLBayes_logisticRegression[n, j, e] <- sum(abs(theta_hat_private_KLBayes_logisticRegression[n, j, e, ] - theta_gen))
+      private_MSE_KLBayes_logisticRegression[n, j, e] <- sqrt(sum((theta_hat_private_KLBayes_logisticRegression[n, j, e, ] - theta_gen)^2))
+    }
+  }
+}
+
+private_MAE_KLBayes_logisticRegression
+apply(private_MAE_KLBayes_logisticRegression / p_dim, MARGIN = c(1, 3), FUN = mean)
+```
+
+## betaD-Bayes Posterior {.tabset}
+
+### MCMC Settings
+
+```{r MCMC_params2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+N_MCMC <- 1000 ## way more computation than we need
+
+w <- 1
+```
+
+### MCMC #? what should i look out for in output
+
+```{r betaBayes_logisticRegression_fit2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+theta_hat_betaBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec), p_dim))
+theta_hat_private_betaBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec), p_dim))
+
+for (n in 1:length(n_obs)) {
+  true_n_data <- true_data[[n]]
+
+  for (j in 1:N_rep) {
+    data_X <- true_n_data[[j]]$data_X
+    data_y <- true_n_data[[j]]$data_y
+
+    for (e in 1:length(epsilon_vec)) {
+      beta_p <- 2 * w / epsilon_vec[e] + 1
+
+      # data
+      betaBayes_logisticRegression_data <- list(
+        n = n_obs[n], p = p_dim, y = matrix(2 * data_y - 1, nrow = n_obs[n], ncol = 1),
+        X = data_X,
+        mu_beta = 0,
+        beta_s = v_0, w = 1, beta_p = beta_p - 1
+      )
+
+      # fit
+      betaBayes_logisticRegression_fit <- sampling(
+        object = betaBayes_logisticRegression_stan,
+        data = betaBayes_logisticRegression_data, seed = 123, # ?? why is seed set different to
+        chains = 1, iter = 1000 + N_MCMC,
+        warmup = 1000
+      )
+
+
+      betaBayes_logisticRegression_params <- rstan::extract(betaBayes_logisticRegression_fit)
+
+      theta_hat_betaBayes_logisticRegression[n, j, e, ] <- colMeans(betaBayes_logisticRegression_params$beta)
+
+      ind <- sample(1:N_MCMC, 1, replace = TRUE)
+
+      theta_hat_private_betaBayes_logisticRegression[n, j, e, ] <- betaBayes_logisticRegression_params$beta[ind, ]
+    }
+  }
+}
+```
+
+### Diag #? what does this mean
+
+```{r betaBayes_logisticRegression_diag2, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+## unprivate error
+unprivate_MAE_betaBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    for (e in 1:length(epsilon_vec)) {
+      unprivate_MAE_betaBayes_logisticRegression[n, j, e] <- sum(abs(theta_hat_betaBayes_logisticRegression[n, j, e, ] - theta_gen))
+    }
+  }
+}
+
+unprivate_MAE_betaBayes_logisticRegression
+apply(unprivate_MAE_betaBayes_logisticRegression / p_dim, MARGIN = c(1, 3), FUN = mean)
+
+private_MAE_betaBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+private_MSE_betaBayes_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    for (e in 1:length(epsilon_vec)) {
+      private_MAE_betaBayes_logisticRegression[n, j, e] <- sum(abs(theta_hat_private_betaBayes_logisticRegression[n, j, e, ] - theta_gen))
+      private_MSE_betaBayes_logisticRegression[n, j, e] <- sqrt(sum((theta_hat_private_betaBayes_logisticRegression[n, j, e, ] - theta_gen)^2))
+    }
+  }
+}
+
+private_MAE_betaBayes_logisticRegression
+apply(private_MAE_betaBayes_logisticRegression / p_dim, MARGIN = c(1, 3), FUN = mean)
+```
+
+## KLD-Bayes power Gibbs Posterior - Minami et al (2016) {.tabset}
+
+Minami et al (2016) can draw one sample from the power/Gibbs posterior with $w = \frac{\epsilon}{2r}\sqrt{\frac{\lambda}{1 + 2\log(1/\delta)}}$ for $(\epsilon, \delta)$-DP (requires $||x_i||_2 = \sqrt{\sum_{j=1}^p x_{ij}^2} \leq r$ so if $x_{ij} \in (0, 1)$ then \$r = \sqrt{p})(I have made the regulariser/prior precision not increase with $n$)
+
+''Setting $\delta = 1/n$ permits $(\epsilon, \delta)$-DP mechanisms that always violate the privacy of a random individual [12]'' Geumlek et al (2017)
+
+### delta
+
+```{r KLDBayes_power_delta2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+delta_vec <- 1e-5 ## could also loop over this
+```
+
+### MCMC
+
+```{r KLDBayes_power_logisticRegression_fit2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+theta_hat_KLBayes_power_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec), p_dim))
+theta_hat_private_KLBayes_power_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec), p_dim))
+
+for (n in 1:length(n_obs)) {
+  true_n_data <- true_data[[n]]
+
+  for (j in 1:N_rep) {
+    data_X <- true_n_data[[j]]$data_X
+    data_y <- true_n_data[[j]]$data_y
+
+    for (e in 1:length(epsilon_vec)) {
+      r <- sqrt(p_dim)
+      w <- epsilon / (2 * r) * (sqrt(lambda / (1 + 2 * log(1 / delta_vec))))
+
+      # data
+      KLBayes_power_logisticRegression_data <- list(
+        n = n_obs[n], p = p_dim, y = matrix(2 * data_y - 1, nrow = n_obs[n], ncol = 1),
+        X = data_X,
+        mu_beta = 0,
+        beta_s = v_0, w = w
+      )
+
+      # fit
+      KLBayes_power_logisticRegression_fit <- sampling(
+        object = KLBayes_power_logisticRegression_stan,
+        data = KLBayes_power_logisticRegression_data, seed = 123,
+        chains = 1, iter = 1000 + N_MCMC,
+        warmup = 1000
+      )
+
+
+      KLBayes_power_logisticRegression_params <- rstan::extract(KLBayes_power_logisticRegression_fit)
+
+      theta_hat_KLBayes_power_logisticRegression[n, j, e, ] <- colMeans(KLBayes_power_logisticRegression_params$beta)
+
+      ind <- sample(1:N_MCMC, 1, replace = TRUE)
+
+      theta_hat_private_KLBayes_power_logisticRegression[n, j, e, ] <- KLBayes_power_logisticRegression_params$beta[ind, ]
+    }
+  }
+}
+```
+
+### Diag
+
+```{r KLBayes_power_logisticRegression_diag2, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+## unprivate error
+unprivate_MAE_KLBayes_power_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    for (e in 1:length(epsilon_vec)) {
+      unprivate_MAE_KLBayes_power_logisticRegression[n, j, e] <- sum(abs(theta_hat_KLBayes_power_logisticRegression[n, j, e, ] - theta_gen))
+    }
+  }
+}
+
+unprivate_MAE_KLBayes_power_logisticRegression
+apply(unprivate_MAE_KLBayes_power_logisticRegression / p_dim, MARGIN = c(1, 3), FUN = mean)
+
+private_MAE_KLBayes_power_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+private_MSE_KLBayes_power_logisticRegression <- array(NA, dim = c(length(n_obs), N_rep, length(epsilon_vec)))
+for (n in 1:length(n_obs)) {
+  for (j in 1:N_rep) {
+    for (e in 1:length(epsilon_vec)) {
+      private_MAE_KLBayes_power_logisticRegression[n, j, e] <- sum(abs(theta_hat_private_KLBayes_power_logisticRegression[n, j, e, ] - theta_gen))
+      private_MSE_KLBayes_power_logisticRegression[n, j, e] <- sqrt(sum((theta_hat_private_KLBayes_power_logisticRegression[n, j, e, ] - theta_gen)^2))
+    }
+  }
+}
+
+private_MAE_KLBayes_power_logisticRegression
+apply(private_MAE_KLBayes_power_logisticRegression / p_dim, MARGIN = c(1, 3), FUN = mean)
+```
+
+## Plots {.tabset}
+
+For each $\epsilon$ plot the MSE's as $n$ increases
+
+### MAE
+
+```{r MAE_compariso plots, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+for (e in 1:length(epsilon_vec)) {
+  plot(n_obs, apply(private_MAE_KLBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "black", type = "b", lwd = 3, xlab = "n", ylab = "MAE", ylim = c(0, ceiling(max(apply(private_MAE_KLBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean)))), main = paste("epsilon = ", epsilon_vec[e]))
+  points(n_obs, apply(private_MAE_betaBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "blue", type = "b", lwd = 3)
+  points(n_obs, apply(private_MAE_KLBayes_power_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "red", type = "b", lwd = 3)
+  legend("topright", c("ObjPert (Alg 1)", paste("power/Gibbs posterior - delta = ", delta_vec), "betaD"), col = c("black", "red", "blue"), lwd = rep(3, 3), bty = "n")
+}
+```
+
+### MSE
+
+```{r MSE_compariso plots, include=TRUE,echo=TRUE, eval = TRUE,  cache=FALSE}
+for (e in 1:length(epsilon_vec)) {
+  plot(n_obs, apply(private_MSE_KLBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "black", type = "b", lwd = 3, xlab = "n", ylab = "MSE", ylim = c(0, ceiling(max(apply(private_MSE_KLBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean)))), main = paste("epsilon = ", epsilon_vec[e]))
+  points(n_obs, apply(private_MSE_betaBayes_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "blue", type = "b", lwd = 3)
+  points(n_obs, apply(private_MSE_KLBayes_power_logisticRegression[, , e] / p_dim, MARGIN = c(1), FUN = mean), col = "red", type = "b", lwd = 3)
+  legend("topright", c("ObjPert (Alg 1)", paste("power/Gibbs posterior - delta = ", delta_vec), "betaD"), col = c("black", "red", "blue"), lwd = rep(3, 3), bty = "n")
+}
+```
+
+Makes snese that we start to win for bigger $\epsilon$, big $\epsilon$ = smaller $\beta$ so here we are only downweighting outliers, for smaller $\epsilon$ we get much smaller $\beta$ which just downweights everything
+
+Could also compare the unprivatised versions

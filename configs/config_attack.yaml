@@ -1,0 +1,47 @@
+defaults:
+  - _base
+
+attack:
+  n_rounds: 1000
+  n_obs: 2
+  n_feats: 2 # lower than 2 can lead to highly unbalanced classes
+  n_drop: 1
+  epsilon: 10
+  private: True
+  craft_name: flip
+
+sweeps:
+  n_obs: None
+
+methods_args:
+  task_name: logReg
+  method_names: ["Chaudhuri_sklearn"]
+  n_mcmc: 1
+data:
+  group: adversary
+  train_args:
+    name: None
+#   group: uci
+#   train_args:
+#     name: abalone
+#     split: train
+
+wandb_args:
+  project: beta-attack-1505
+
+logging:
+  dir: False
+
+run_name:
+  prefix: "attack"
+  model_keys_name:
+    [
+      "methods_args.task_name",
+      "methods_args.method_names",
+      "methods_args.reg",
+      "attack.epsilon",
+      "attack.n_obs",
+      "attack.n_feats",
+      "attack.private",
+      "attack.craft_name",
+    ]
