@@ -1,0 +1,21 @@
+program: src/main_sweep.py
+method: grid
+metric:
+  goal: minimize
+  name: None
+project: dp-beta-uci
+name: uci-initsweep-abadba
+
+parameters:
+  data.name:
+    values: [breast, vertebral, raisin]
+  #   values: [abalone, adult, bank]
+  seed:
+    values: [0, 1000, 2000, 3000, 4000]
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - +experiment=uci
+  - ${args_no_hyphens}

@@ -1,0 +1,15 @@
+task_name: mlpReg
+method_names: ["BetaBayes", "dpsgd"]
+delta: 1e-5
+# MCMC
+n_warmup: 500
+n_mcmc: 50 # one sample is enough for DP, choose more to show how multiple samples perform
+prior_var: 1
+# NN
+hidden_size: 10
+lr: 1e-1
+clip_norm: 1
+epochs: None
+batch_size: 2048
+# OTHER
+run_bnn: False
